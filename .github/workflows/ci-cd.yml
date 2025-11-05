@@ -4,37 +4,83 @@ on:
   push:
     branches: [main]
 
+env:
+  ACR_NAME: CICDAngularRegistery  # Replace with your Azure Container Registry name
+  AKS_RESOURCE_GROUP: TriDevCICD  # Replace with your AKS resource group name
+  AKS_CLUSTER_NAME: CICDAngularCluster  # Replace with your AKS cluster name
+  CONTAINER_NAME: angular-practice-container  # Name of your container
+  IMAGE_TAG: latest  # Image tag
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: npm install
-      - run: npm run build --prod
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Install dependencies
+        run: npm install
+        
+      - name: Build
+        run: npm run build --prod
+        
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist
+          path: dist/
 
   docker:
     runs-on: ubuntu-latest
     needs: build
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: dist
+          path: dist/
+          
       - name: Azure Login
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - name: Login to ACR
-        run: az acr login --name myacr
-      - run: |
-          docker build -t myacr.azurecr.io/demo-app:latest .
-          docker push myacr.azurecr.io/demo-app:latest
+          
+      - name: Login to Azure Container Registry
+        run: az acr login --name ${{ env.ACR_NAME }}
+        
+      - name: Build and Push Docker Image
+        run: |
+          docker build -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.CONTAINER_NAME }}:${{ env.IMAGE_TAG }} .
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.CONTAINER_NAME }}:${{ env.IMAGE_TAG }}
 
   deploy:
     runs-on: ubuntu-latest
     needs: docker
     steps:
-      - uses: azure/setup-kubectl@v3
-      - run: az aks get-credentials --resource-group myaks-rg --name myaks
-      - run: |
+      - uses: actions/checkout@v4
+      
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          
+      - name: Set AKS Context
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ env.AKS_RESOURCE_GROUP }}
+          cluster-name: ${{ env.AKS_CLUSTER_NAME }}
+          
+      - name: Deploy to AKS
+        run: |
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
